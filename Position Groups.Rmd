@@ -1,0 +1,311 @@
+---
+title: "Position Grouping"
+output: html_document
+date: "2023-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+library(pROC)
+library(sjPlot)
+```
+
+
+## R Markdown
+
+#load all week's tackle data
+```{r}
+tackle.data <- data.table::fread("tackle_events/all_week_tackle_data.csv")
+plays_dat <- plays_dat <- data.table::fread("plays.csv")
+```
+
+#Add all necessary data 
+```{r}
+add_data <- plays_dat %>%
+  select(gameId, playId, offenseFormation, defendersInTheBox)
+tackle.data <- merge(tackle.data, add_data, by = c('gameId', 'playId'))
+```
+
+
+#Create Positional Groups
+```{r}
+table(tackle.data$position)
+
+tackle.data <- tackle.data %>%
+  group_by(position) %>%
+  mutate(group = ifelse(position == "DE" | position == "DT" | position == "NT", "lineman",
+                        ifelse(position == "ILB" | position == "MLB" | position == "OLB", "linebacker", 
+                               ifelse (position == "SS" | position == "FS", "safety", "cornerback"))))
+
+table(tackle.data$group)
+```
+
+```{r}
+reg.tackle.data <- tackle.data[, c(4,13:20, 22, 24, 27:35, 40:42)]
+
+set.seed(123)
+train.rows <- sample(1:dim(reg.tackle.data)[1], dim(reg.tackle.data)[1]*0.7) 
+
+train.df <- reg.tackle.data[train.rows,]
+
+
+valid.df <- reg.tackle.data[-train.rows,]
+
+
+#logistic reg model for all predictors of a tackle
+group.pos.reg <- glm(tackle ~., data = train.df, family = "binomial") 
+options(scipen=999)
+summary(group.pos.reg)
+
+# use predict() with type = "response" to compute predicted probabilities. 
+group.pos.reg.pred <- predict(group.pos.reg, valid.df, type = "response", positive = "1")
+
+#Find the best threshold
+
+roc <- roc(valid.df$tackle, group.pos.reg.pred)
+
+plot(roc)
+
+auc(roc)
+
+coords(roc, "best", ret = 
+        "threshold", transpose = TRUE)
+
+#threshold = 0.8328937 
+
+#assigning predicted class = 1 for predicted probability > cutoff and 0 otherwise
+cutoff <- 0.832243 
+pred_class <- ifelse(group.pos.reg.pred> cutoff, 1, 0)
+options(scipen=999)
+
+
+#confusion matrix
+confusionMatrix(as.factor(pred_class), as.factor(valid.df$tackle), positive = "1")
+
+#Mixed Effects model looking at the different position groups
+mixed <- lme4::glmer(tackle ~ speed_diff_bc_vs_tackle_t + snap_tackle_time + a + (1| group), data = reg.tackle.data, family = "binomial")
+
+summary(mixed)
+
+plot_model(mixed, type = "pred", terms = c("group"), pred.type = "re", ci.lvl = FALSE)
+
+```
+
+
+#Logistic Regression for each position group
+```{r}
+#Filter for only the safeties 
+safety <- reg.tackle.data %>%
+  filter(group == "safety") 
+
+safety <- safety[, -23]
+#training and validation datasets - 70% training/ 30% validation
+set.seed(123)
+train.rows.s <- sample(1:dim(safety)[1], dim(safety)[1]*0.7) 
+
+train.df.s <- safety[train.rows.s,]
+
+
+valid.df.s <- safety[-train.rows.s,]
+
+
+
+#logistic reg model for all predictors of a tackle
+safety.reg <- glm(tackle ~., data = train.df.s, family = "binomial") 
+options(scipen=999)
+summary(safety.reg)
+
+# use predict() with type = "response" to compute predicted probabilities. 
+safety.reg.pred <- predict(safety.reg, valid.df.s, type = "response")
+
+#Find the best threshold
+
+roc_s <- roc(valid.df.s$tackle, safety.reg.pred)
+
+plot(roc_s)
+
+auc(roc_s)
+
+coords(roc_s, "best", ret = 
+        "threshold", transpose = TRUE)
+
+#threshold = 0.832575 
+
+#assigning predicted class = 1 for predicted probability > cutoff and 0 otherwise
+cutoff_s <- 0.832575
+pred_class_s <- ifelse(safety.reg.pred> cutoff_s, 1, 0)
+options(scipen=999)
+
+
+#confusion matrix
+
+confusionMatrix(as.factor(pred_class_s), as.factor(valid.df.s$tackle))
+
+
+```
+
+```{r}
+#Filter for only the linemen 
+lineman <- reg.tackle.data %>%
+  filter(group == "lineman") 
+
+lineman <- lineman[, -23]
+#training and validation datasets - 70% training/ 30% validation
+set.seed(123)
+train.rows.lm <- sample(1:dim(lineman)[1], dim(lineman)[1]*0.7) 
+
+train.df.lm <- lineman[train.rows.lm,]
+
+
+valid.df.lm <- lineman[-train.rows.lm,]
+
+
+
+#logistic reg model for all predictors of a tackle
+lineman.reg <- glm(tackle ~., data = train.df.lm, family = "binomial") 
+options(scipen=999)
+summary(lineman.reg)
+
+# use predict() with type = "response" to compute predicted probabilities. 
+lineman.reg.pred <- predict(lineman.reg, valid.df.lm, type = "response")
+
+#Find the best threshold
+
+roc_lm <- roc(valid.df.lm$tackle, lineman.reg.pred)
+
+plot(roc_lm)
+
+auc(roc_lm)
+
+coords(roc_lm, "best", ret = 
+        "threshold", transpose = TRUE)
+
+#threshold = 0.7188264
+
+#assigning predicted class = 1 for predicted probability > cutoff and 0 otherwise
+cutoff_lm <- 0.7188264
+pred_class_lm <- ifelse(lineman.reg.pred> cutoff_lm, 1, 0)
+options(scipen=999)
+
+
+#confusion matrix
+
+confusionMatrix(as.factor(pred_class_lm), as.factor(valid.df.lm$tackle))
+
+```
+
+```{r}
+#Filter for only the linebackers 
+linebacker <- reg.tackle.data %>%
+  filter(group == "linebacker") 
+
+linebacker <- linebacker[, -23]
+#training and validation datasets - 70% training/ 30% validation
+set.seed(123)
+train.rows.lb <- sample(1:dim(linebacker)[1], dim(linebacker)[1]*0.7) 
+
+train.df.lb <- linebacker[train.rows.lb,]
+
+
+valid.df.lb <- linebacker[-train.rows.lb,]
+
+
+#logistic reg model for all predictors of a tackle
+linebacker.reg <- glm(tackle ~., data = train.df.lb, family = "binomial") 
+options(scipen=999)
+summary(linebacker.reg)
+
+# use predict() with type = "response" to compute predicted probabilities. 
+linebacker.reg.pred <- predict(linebacker.reg, valid.df.lb, type = "response")
+
+#Find the best threshold
+
+roc_lb <- roc(valid.df.lb$tackle, linebacker.reg.pred)
+
+plot(roc_lb)
+
+auc(roc_lb)
+
+coords(roc_lb, "best", ret = 
+        "threshold", transpose = TRUE)
+
+#threshold = 0.8401929
+
+#assigning predicted class = 1 for predicted probability > cutoff and 0 otherwise
+cutoff_lb <- 0.8401929
+pred_class_lb <- ifelse(linebacker.reg.pred> cutoff_lb, 1, 0)
+options(scipen=999)
+
+
+#confusion matrix
+
+confusionMatrix(as.factor(pred_class_lb), as.factor(valid.df.lb$tackle))
+```
+
+```{r}
+#Filter for only the cornerbacks 
+cornerback <- reg.tackle.data %>%
+  filter(group == "cornerback") 
+
+cornerback <- cornerback[, -23]
+#training and validation datasets - 70% training/ 30% validation
+set.seed(123)
+train.rows.cb <- sample(1:dim(cornerback)[1], dim(cornerback)[1]*0.7) 
+
+train.df.cb <- cornerback[train.rows.cb,]
+
+
+valid.df.cb <- cornerback[-train.rows.cb,]
+
+
+#logistic reg model for all predictors of a tackle
+cornerback.reg <- glm(tackle ~., data = train.df.cb, family = "binomial") 
+options(scipen=999)
+summary(cornerback.reg)
+
+# use predict() with type = "response" to compute predicted probabilities. 
+cornerback.reg.pred <- predict(cornerback.reg, valid.df.cb, type = "response")
+
+#Find the best threshold
+
+roc_cb <- roc(valid.df.cb$tackle, cornerback.reg.pred)
+
+plot(roc_cb)
+
+auc(roc_cb)
+
+coords(roc_cb, "best", ret = 
+        "threshold", transpose = TRUE)
+
+#threshold = 0.9198492
+
+#assigning predicted class = 1 for predicted probability > cutoff and 0 otherwise
+cutoff_cb <- 0.9222914 
+pred_class_cb <- ifelse(cornerback.reg.pred> cutoff_cb, 1, 0)
+options(scipen=999)
+
+
+#confusion matrix
+
+confusionMatrix(as.factor(pred_class_cb), as.factor(valid.df.cb$tackle))
+```
+
+
+```{r}
+summary(linebacker.reg)
+summary(lineman.reg)
+summary(cornerback.reg)
+summary(safety.reg)
+
+
+confusionMatrix(as.factor(pred_class_lm), as.factor(valid.df.lm$tackle))
+confusionMatrix(as.factor(pred_class_lb), as.factor(valid.df.lb$tackle))
+confusionMatrix(as.factor(pred_class_cb), as.factor(valid.df.cb$tackle))
+confusionMatrix(as.factor(pred_class_s), as.factor(valid.df.s$tackle))
+```
+

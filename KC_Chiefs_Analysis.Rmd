@@ -1,0 +1,221 @@
+---
+title: "Rankings by player"
+output: html_document
+date: "2023-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(forecast)
+```
+
+
+```{r}
+#load all week's tackle data 
+tackle.data <- data.table::fread("tackle_events/all_week_tackle_data.csv")
+```
+
+#Prediction for every player's tackle probability
+```{r}
+reg.tackle.data <- tackle.data[, c(4,5,15:20,22, 25,28:29,32:38)]
+
+
+#logistic reg model for tackle against tackle data
+tackle.reg <- glm(tackle ~., data = reg.tackle.data, family = "binomial") 
+
+#prediction column for each tackle event
+tackle.data$prediction <- predict(tackle.reg, tackle.data, type = "response")
+```
+
+##Narrowing down options to just the Kansas City Chiefs
+```{r}
+kansas_city <- tackle.data %>%
+  filter(club == "KC") %>%
+  group_by(nflId)%>%
+  #creating an average tackle probability by player
+  mutate(avg_tackle_prob = mean(prediction)) %>%
+  #Ranking the players based on their average tackle probability prediction
+  arrange(desc(avg_tackle_prob))
+
+
+kansas_city1 <- kansas_city %>%
+  group_by(nflId) %>%
+  filter(n() >= 2)
+
+
+#best tackler by prediction - Joshua Williams
+
+#top 3- Joshua Williams (1.0), Jaylen Watson (0.903), Chris Dunlap (0.8889)
+
+#There are definitely guys above 0.906, but this is really dependent on amount of tackles. Chris Lammons had 3 while other have 8+ or 1....
+ 
+```
+
+
+# Analyze Kansas City Chiefs Tackle Probabilities
+```{r}
+#merging offensive formations with the tackle data 
+plays_dat <- data.table::fread("plays.csv")
+
+add_data <- plays_dat %>%
+  select(gameId, playId, offenseFormation, defendersInTheBox)
+tackle.data1 <- merge(tackle.data, add_data, by = c('gameId', 'playId'))
+
+#adjusting start position of ball so it is unifrom
+tackle.data1 <- tackle.data1 %>%
+  mutate(adjusted_x = 60 + x_dist_football,
+         adjusted_y = 26.5 + y_dist_football)
+
+tackle.data1$adjusted_x <- ifelse(tackle.data1$adjusted_x < 60, 
+                                        60 + (60-tackle.data1$adjusted_x),
+                                        tackle.data1$adjusted_x)
+
+tackle.data1 %>%
+  filter(club == "KC") %>%
+  group_by(offenseFormation) %>%
+  summarise(tackle.prob = mean(prediction)) %>%
+  arrange(desc(tackle.prob))
+
+
+SHOTGUN.tackle.dat <- tackle.data1 %>%
+  filter(club == "KC", offenseFormation == "SHOTGUN") %>%
+  group_by(displayName) %>%
+  mutate(tackle.prob = mean(prediction), 
+            avg.dist.snap = mean(football_dist_snap)) %>%
+  arrange(desc(tackle.prob))
+
+SHOTGUN.tackle.dat
+
+EMPTY.tackle.dat <- tackle.data1 %>%
+  filter(club == "KC", offenseFormation == "EMPTY") %>%
+  group_by(displayName) %>%
+  mutate(tackle.prob = mean(prediction), 
+            avg.dist.snap = mean(football_dist_snap)) %>%
+  arrange(desc(tackle.prob))
+
+EMPTY.tackle.dat
+
+IFORM.tackle.dat <- tackle.data1 %>%
+  filter(club == "KC", offenseFormation == "I_FORM") %>%
+  group_by(displayName) %>%
+  mutate(tackle.prob = mean(prediction), 
+            avg.dist.snap = mean(football_dist_snap)) %>%
+  arrange(desc(tackle.prob))
+
+IFORM.tackle.dat
+
+SINGLEBACK.tackle.dat <- tackle.data1 %>%
+  filter(club == "KC", offenseFormation == "SINGLEBACK") %>%
+  group_by(displayName) %>%
+  mutate(tackle.prob = mean(prediction), 
+            avg.dist.snap = mean(football_dist_snap)) %>%
+  arrange(desc(tackle.prob))
+
+SINGLEBACK.tackle.dat
+
+PISTOL.tackle.dat <- tackle.data1 %>%
+  filter(club == "KC", offenseFormation == "PISTOL") %>%
+  group_by(displayName) %>%
+  mutate(tackle.prob = mean(prediction), 
+            avg.dist.snap = mean(football_dist_snap)) %>%
+  arrange(desc(tackle.prob))
+
+PISTOL.tackle.dat
+
+JUMBO.tackle.dat <- tackle.data1 %>%
+  filter(club == "KC", offenseFormation == "JUMBO") %>%
+  group_by(displayName) %>%
+  mutate(tackle.prob = mean(prediction), 
+            avg.dist.snap = mean(football_dist_snap)) %>%
+  arrange(desc(tackle.prob))
+
+JUMBO.tackle.dat
+```
+
+
+
+```{r}
+#install.packages("remotes")
+#remotes::install_github("robkravec/ggfootball")
+library(ggfootball)
+library("ggplot2")
+
+g_1 <- ggfootball() + geom_point(data = SHOTGUN.tackle.dat,
+    aes(x = adjusted_x, y = adjusted_y, col = prediction, size = 1.5, alpha = 0.6)) +
+   geom_vline(xintercept =60, lty=2,col="red", size=2) +
+   guides(size = "none", alpha = "none")+
+   theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(title = "Tackle Probability Against Shotgun Formation")
+  
+  
+g_1
+
+
+g_2 <- ggfootball() + geom_point(data = IFORM.tackle.dat,
+    aes(x = adjusted_x, y = adjusted_y, color = prediction, size = 3)) +
+   geom_vline(xintercept =60, lty=2,col="red", size=2)+
+  guides(size = "none")+
+   theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(title = "Tackle Probability Against I-Formation")
+  
+  
+g_2
+
+g_3 <- ggfootball() + 
+  geom_point(data = EMPTY.tackle.dat,
+    aes(x = adjusted_x, y = adjusted_y, col = prediction, size = 3)) +
+   geom_vline(xintercept =60, lty=2,col="red", size=2)+
+  guides(size = "none")+
+   theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(title = "Tackle Probability Against Empty Formation")
+
+  
+g_3
+```
+
+
+# Example KCC Play
+
+```{r}
+tracking_week_1 <- data.table::fread("tracking_week_1.csv")
+```
+
+
+```{r}
+play55_tracking <- tracking_week_1 %>%
+  filter(gameId == 2022091110, playId == 55)
+
+football_loc_55 <- tracking_week_1 %>%
+  filter(gameId == 2022091110, playId == 55, displayName == "football")
+line_of_scrimmage55 <- football_loc_55$x[1]
+```
+
+```{r}
+
+g_4 <- ggfootball() + geom_point(data = play55_tracking,
+    aes(x = x, y = y, col = club, alpha = time)) +
+    geom_vline(xintercept =line_of_scrimmage55, lty=2,col="orange")+
+    guides(alpha = "none") +
+    scale_color_manual(values = c("ARI" = "yellow", "KC" = "red", "football" = "black"))
+  
+g_4
+```

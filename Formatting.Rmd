@@ -1,0 +1,504 @@
+---
+title: "Formatting_MG"
+author: "Megan Glass"
+date: "2023-11-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggfootball)
+library(forecast)
+library(caret)
+```
+
+```{r}
+tackles <- data.table::fread("tackles.csv")
+
+plays <- data.table::fread("plays.csv")
+```
+
+## Preprocess Data
+
+```{r}
+heights_to_inches <- function(height_strings) {
+  # Initialize an empty vector to store the results
+  result <- numeric(length(height_strings))
+  
+  # Loop through each height string in the vector
+  for (i in seq_along(height_strings)) {
+    # Split the height string into feet and inches
+    height_components <- strsplit(height_strings[i], "-")[[1]]
+    
+    # Convert feet and inches to inches
+    feet <- as.numeric(height_components[1])
+    inches <- as.numeric(height_components[2])
+    
+    # Calculate total inches and store the result
+    result[i] <- feet * 12 + inches
+  }
+  
+  return(result)
+}
+```
+
+
+
+
+# Derived Variables 
+
+want player with the ball and player who made the tackle (done)
+use missed tackle (done)
+
+## Merge with Plays
+
+Get ballCarrierID from plays
+
+```{r}
+week6 <- data.table::fread("tackle_events/tackle_events_week6.csv")
+week6 <- week6[, -24]
+colnames(week6)[5] <- "displayName"
+week6$height_in <- heights_to_inches(week6$height)
+play373 <- week6 %>%
+  filter(gameId == 2022101605, playId == 373)
+
+football_loc <- play373 %>%
+  filter(displayName == "football")
+    ## line of scrimmage
+    line_of_scrimmage <- football_loc$x[1]
+    ## ball_start
+    ball_start <- football_loc[1,]
+
+play373$ballCarrierIndicator <- 0
+
+ballCarrierId <- plays %>%
+  filter(gameId == 2022101605, playId == 373) %>%
+  select(ballCarrierId)
+
+play373$ballCarrierIndicator[which(play373$nflId == ballCarrierId$ballCarrierId)] <- 1
+
+table(play373$ballCarrierIndicator)
+```
+
+## Merge with tackle (attempt)
+get who made the tackle from plays
+```{r}
+play373$tackleIndicator <- 0
+
+tackleId <- tackles %>%
+  filter(gameId == 2022101605, playId == 373) %>%
+  select(nflId)
+
+play373$tackleIndicator[which(play373$nflId == tackleId$nflId)] <- 1
+
+table(play373$tackleIndicator)
+```
+
+points of time:
+snap 
+player crosses line of scrimmage
+tackle
+
+variables to include for each time:
+orientation
+time from snap to tackle
+speeds directions
+
+## Distance from the football (at the time of the snap)
+```{r}
+players <- unique(play373$displayName)
+frames <- unique(play373$frameId)
+
+play373$football_dist_snap <- NA
+play373$orientation_snap <- NA
+play373$snap_tackle_time <- NA
+play373$speed_diff_bc_vs_tackle_snap <- NA
+
+snap_loc_x <- ball_start$x
+snap_loc_y <- ball_start$y
+snap_time <-  ball_start$time
+snap_frame <- ball_start$frameId
+
+tackle_time <- play373 %>%
+  filter(tackleIndicator == 1, event == "tackle") %>%
+  select(time)
+
+time_diff <- tackle_time$time - snap_time
+
+player_x <- play373 %>% 
+  filter(tackleIndicator ==1, frameId == snap_frame) %>%
+  select(x)
+
+player_y <- play373 %>% 
+  filter(tackleIndicator ==1, frameId == snap_frame) %>%
+  select(y)
+
+bc_speed <- play373 %>%
+  filter(ballCarrierIndicator == 1, frameId ==snap_frame) %>%
+  select(s)
+
+tackle_speed <- play373 %>%
+  filter(tackleIndicator == 1, frameId==snap_frame) %>%
+  select(s)
+
+speed_diff<- bc_speed$s - tackle_speed$s
+
+orientation <- play373 %>%
+  filter(tackleIndicator == 1, frameId == snap_frame) %>%
+  select(o)
+
+play373$football_dist_snap[which(play373$tackleIndicator==1)] <- sqrt((snap_loc_x - player_x)^2+(snap_loc_y - player_y)^2)$x
+    
+play373$orientation_snap[which(play373$tackleIndicator == 1)] <- orientation$o
+
+play373$snap_tackle_time[which(play373$tackleIndicator ==1)] <- time_diff
+  
+play373$speed_diff_bc_vs_tackle_snap[which(play373$tackleIndicator == 1)] <- speed_diff
+
+play373 %>%
+  filter(tackleIndicator == 1)
+```
+
+## Distance from the football (at the tackle)
+```{r}
+play373$football_dist_t <- NA
+play373$orientation_t <- NA
+play373$speed_diff_bc_vs_tackle_t <- NA
+
+
+tackle_x <- play373 %>%
+  filter(event == "tackle", displayName == "football") %>% 
+  select(x)
+tackle_y <- play373 %>%
+  filter(event == "tackle", displayName == "football") %>% 
+  select(y)
+
+tackle_frame <- play373 %>%
+  filter(event == "tackle", displayName == "football") %>%
+  select(frameId)
+
+player_x <- play373 %>% 
+  filter(tackleIndicator ==1, frameId == tackle_frame$frameId) %>%
+  select(x)
+
+player_y <- play373 %>% 
+  filter(tackleIndicator ==1, frameId == tackle_frame$frameId) %>%
+  select(y)
+
+bc_speed <- play373 %>%
+  filter(ballCarrierIndicator == 1, frameId ==tackle_frame$frameId) %>%
+  select(s)
+
+tackle_speed <- play373 %>%
+  filter(tackleIndicator == 1, frameId ==tackle_frame$frameId) %>%
+  select(s)
+
+speed_diff<- bc_speed$s[1] - tackle_speed$s[1]
+
+orientation <- play373 %>%
+  filter(tackleIndicator == 1, frameId == tackle_frame$frameId) %>%
+  select(o) %>%
+  .[1]
+
+play373$football_dist_t[which(play373$tackleIndicator == 1)] <- sqrt((tackle_x$x - player_x$x)^2+(tackle_y$y - player_y$y)^2)
+play373$orientation_t[which(play373$tackleIndicator == 1)] <- orientation$o
+play373$speed_diff_bc_vs_tackle_t[which(play373$tackleIndicator == 1)] <- speed_diff
+play373 %>%
+  filter(tackleIndicator == 1)
+```
+
+## Variables at the time of the snap
+```{r}
+play373$football_dist <- NA
+
+for (i in 1:length(players)){
+  for (j in 1:length(frames)){
+    football_x <- play373$x[which(play373$displayName == "football" &
+                                    play373$frameId == frames[j])]
+    football_y <- play373$y[which(play373$displayName == "football" &
+                                    play373$frameId == frames[j])]
+    player_x <- play373$x[which(play373$displayName == players[i] &
+                                    play373$frameId == frames[j])]
+    player_y <- play373$y[which(play373$displayName == players[i] &
+                                    play373$frameId == frames[j])]
+    
+    dist <- sqrt((football_x - player_x)^2+(football_y - player_y)^2)
+    
+    play373$football_dist[which(play373$displayName == players[i] &
+                                    play373$frameId == frames[j])] <- dist
+    
+  }
+}
+```
+
+
+
+
+
+## Get the one row of tackle
+
+```{r}
+the_tackle <- tackles %>%
+  filter(gameId == 2022101605, playId == 373)
+
+
+tackle_player <- play373 %>%
+  filter(tackleIndicator == 1, event == "tackle") 
+
+merge(the_tackle, tackle_player)
+```
+
+
+
+### All weeks data
+```{r}
+file_names <- c("tackle_events/tackle_events_week1.csv", 
+                "tackle_events/tackle_events_week2.csv",
+                "tackle_events/tackle_events_week3.csv",
+                "tackle_events/tackle_events_week4.csv",
+                "tackle_events/tackle_events_week5.csv",
+                "tackle_events/tackle_events_week6.csv",
+                "tackle_events/tackle_events_week7.csv",
+                "tackle_events/tackle_events_week8.csv",
+                "tackle_events/tackle_events_week9.csv")
+
+# Initialize an empty data frame
+all_week_data <- data.frame()
+
+# Loop through the files and read data into the combined_data data frame
+for (file in file_names) {
+  current_data <- data.table::fread(file, header = TRUE)  # Adjust parameters based on your CSV files
+  
+  current_data <- current_data[, -24]
+  colnames(current_data)[5] <- "displayName"
+  current_data$height_in <- heights_to_inches(current_data$height)
+  current_data <- current_data[,-c(8,21,22,19)]
+
+  all_week_data <- bind_rows(all_week_data, current_data)
+}
+
+```
+
+```{r}
+# not this
+all_week_data <- data.table::fread("tackle_events/tackle_events_week1.csv")
+all_week_data <- all_week_data[, -24]
+  colnames(all_week_data)[5] <- "displayName"
+  all_week_data$height_in <- heights_to_inches(all_week_data$height)
+```
+
+
+
+### All weeks
+```{r}
+test.games <- unique(all_week_data$gameId)
+selected.game <- test.games[1]
+
+all_week_data %>%
+  filter(gameId == selected.game) %>%
+  group_by(playId) %>%
+  summarise(count = n()) 
+
+
+tackles %>%
+  filter(gameId == selected.game) %>%
+  group_by(playId) %>%
+  summarise(count = n())
+```
+
+
+```{r}
+week.games <- unique(all_week_data$gameId)
+
+week.tackles <- data.frame()
+
+for(g in 1:length(week.games)) {
+  selected.game <- week.games[g]
+
+  game <- all_week_data %>%
+    filter(gameId == selected.game) 
+  
+  game.plays <- unique(game$playId)
+  
+  game$ballCarrierIndicator <- 0
+  game$tackleIndicator <- 0
+  game$football_dist_snap <- NA
+  game$orientation_snap <- NA
+  game$snap_tackle_time <- NA
+  game$speed_diff_bc_vs_tackle_snap <- NA
+  game$football_dist_t <- NA
+  game$orientation_t <- NA
+  game$speed_diff_bc_vs_tackle_t <- NA
+  game$player_start_x <- NA
+  game$player_start_y <- NA
+  game$x_dist_football <- NA
+  game$y_dist_football <- NA
+  game$ball_start_x <- NA
+  game$ball_start_y <- NA
+  
+  for (i in 1:length(game.plays)) {
+    ## football locations
+    football_loc <- game %>%
+      filter(playId == game.plays[i], displayName == "football")
+    ## line of scrimmage
+    line_of_scrimmage <- football_loc$x[1]
+    ## ball_start
+    ball_start <- football_loc[1,]
+    
+    snap_loc_x <- ball_start$x
+    snap_loc_y <- ball_start$y
+    snap_time <-  ball_start$time
+    snap_frame <- ball_start$frameId
+  
+    ballCarrierId <- plays %>%
+      filter(gameId == selected.game, playId == game.plays[i])%>%
+      select(ballCarrierId)
+  
+    game$ballCarrierIndicator[which(game$nflId == ballCarrierId$ballCarrierId &
+                                      game$playId == game.plays[i])] <- 1
+    bc_speed_snap <- game %>%
+      filter(playId == game.plays[i],ballCarrierIndicator == 1, frameId ==snap_frame) %>%
+      select(s)
+    
+    tackleId <- tackles %>%
+      filter(gameId == selected.game, playId == game.plays[i]) %>%
+      select(nflId)
+  
+    
+    for(j in 1:length(tackleId)){
+      game$tackleIndicator[which(game$nflId == tackleId$nflId[j] &
+                                      game$playId == game.plays[i])] <- 1
+      
+      tackle_time <- game %>%
+        filter(playId == game.plays[i], tackleIndicator == 1, event == "tackle", nflId == tackleId$nflId[j]) %>%
+        select(time)
+      
+      time_diff_snap <- difftime(tackle_time$time, snap_time)
+      
+      game$ball_start_x[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- snap_loc_x
+       game$ball_start_y[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- snap_loc_y
+      
+      player_x <- game %>%
+      filter(playId == game.plays[i], tackleIndicator ==1, frameId == snap_frame, nflId == tackleId$nflId[j]) %>%
+        select(x)
+      
+      game$player_start_x[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- player_x
+      game$x_dist_football[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- snap_loc_x - player_x
+      
+      player_y <- game %>%
+        filter(playId == game.plays[i],tackleIndicator ==1, frameId == snap_frame, nflId == tackleId$nflId[j]) %>%
+        select(y)
+      game$player_start_y[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- player_y
+      game$y_dist_football[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- snap_loc_y - player_y
+      
+      tackle_speed_snap <- game %>%
+        filter(playId == game.plays[i],tackleIndicator == 1, frameId==snap_frame, nflId == tackleId$nflId[j]) %>%
+        select(s)
+      
+      speed_diff_snap<- bc_speed_snap$s - tackle_speed_snap$s
+      
+      orientation_snap <- game %>%
+        filter(playId == game.plays[i],tackleIndicator == 1, frameId == snap_frame, nflId == tackleId$nflId[j]) %>%
+        select(o)
+      
+      game$football_dist_snap[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- sqrt((snap_loc_x - player_x)^2+(snap_loc_y - player_y)^2)$x
+        
+    game$orientation_snap[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- orientation_snap$o
+    
+    game$snap_tackle_time[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])]<- time_diff_snap
+      
+    game$speed_diff_bc_vs_tackle_snap[which(game$tackleIndicator==1 &
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- speed_diff_snap
+      tackle_x <- game %>%
+        filter(playId == game.plays[i], event == "tackle", displayName == "football") %>% 
+        select(x)
+      tackle_y <- game %>%
+        filter(playId == game.plays[i], event == "tackle", displayName == "football") %>% 
+        select(y)
+      
+      tackle_frame <- game %>%
+        filter(playId == game.plays[i], event == "tackle", displayName == "football") %>%
+        select(frameId)
+      bc_speed_t <- game %>%
+        filter(playId == game.plays[i], ballCarrierIndicator == 1, frameId ==tackle_frame$frameId) %>%
+        select(s)
+    
+      player_x_t <- game %>%
+        filter(playId == game.plays[i], tackleIndicator ==1, frameId == tackle_frame$frameId, nflId == tackleId$nflId[j]) %>%
+        select(x)
+      
+      player_y_t <- game %>%
+        filter(playId == game.plays[i], tackleIndicator ==1, frameId == tackle_frame$frameId, nflId == tackleId$nflId[j]) %>%
+        select(y)
+      
+      tackle_speed_t <- game %>%
+        filter(playId == game.plays[i], tackleIndicator == 1, frameId ==tackle_frame$frameId, nflId == tackleId$nflId[j]) %>%
+        select(s)
+      
+      speed_diff_t<- bc_speed_t$s[1] - tackle_speed_t$s[1]
+      
+      orientation_t <- game %>%
+        filter(playId == game.plays[i], tackleIndicator == 1, frameId == tackle_frame$frameId, nflId == tackleId$nflId[j]) %>%
+        select(o) %>%
+        .[1]
+      
+      game$football_dist_t[which(game$tackleIndicator == 1&
+                                        game$playId == game.plays[i] &
+                                        game$nflId == tackleId$nflId[j])] <- sqrt((tackle_x$x - player_x_t$x)^2+(tackle_y$y - player_y_t$y)^2)
+      game$orientation_t[which(game$tackleIndicator == 1&
+                                          game$playId == game.plays[i] &
+                                          game$nflId == tackleId$nflId[j])] <- orientation_t$o
+      game$speed_diff_bc_vs_tackle_t[which(game$tackleIndicator == 1 &
+                                          game$playId == game.plays[i] &
+                                          game$nflId == tackleId$nflId[j])] <- speed_diff_t
+    }
+    
+  }
+
+  the_tackle <- tackles %>%
+    filter(gameId == selected.game, playId %in% game.plays)
+  
+  
+  tackle_player <- game %>%
+    filter(tackleIndicator == 1, event == "tackle") 
+  
+  week.tackles <- rbind(week.tackles, merge(the_tackle, tackle_player, by = c("gameId", "playId", "nflId")))
+
+}
+```
+
+```{r}
+game %>%
+  filter(playId == game.plays[i], event == "tackle") %>%
+        select(frameId)
+```
+
+
+
+```{r}
+data.table::fwrite(week.tackles, file = "tackle_events/all_week_tackle_data.csv")
+```
+

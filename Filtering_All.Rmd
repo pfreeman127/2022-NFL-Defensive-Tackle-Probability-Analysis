@@ -1,0 +1,111 @@
+---
+title: "Filtering_All"
+author: "Megan Glass"
+date: "2023-11-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+```{r}
+library(nflfastR)
+library(cfbfastR)
+library(ggplot2)
+library(dplyr)
+
+
+library(tidyverse) 
+library(ggdark)
+library(ggimage)
+library(GGally)
+library(ggrepel)
+
+##source("pbp_functions.r") 
+```
+
+# Load Data
+
+```{r}
+games <- data.table::fread("games.csv")
+players <- data.table::fread("players.csv")
+plays <- data.table::fread("plays.csv")
+tackles <- data.table::fread("tackles.csv")
+tracking_week_1 <- data.table::fread("tracking_week_1.csv")
+tracking_week_2 <- data.table::fread("tracking_week_2.csv")
+
+
+# Fix Date
+games$gameDate <- as.Date(games$gameDate, "%m/%d/%y") # convert date to a date
+```
+
+#Filtering out all pass plays 
+```{r}
+#Filtering out all the tackles in tracking week 1
+tackle_ID_week_1 <- tracking_week_1 %>%
+  filter(event == "tackle", displayName == "football") %>%
+  select(gameId, playId)%>%
+  distinct()
+ 
+
+#unique entry of 1 game, 1 play
+tackle_events_week1 <- tracking_week_1%>%
+  filter(gameId == tackle_ID_week_1$gameId[1],playId == tackle_ID_week_1$playId[1])
+
+#loop through for every play in every game
+for (i in 2:(dim(tackle_ID_week_1)[1])) {
+  indiv.play <- tracking_week_1 %>%
+    filter(gameId == tackle_ID_week_1$gameId[i], playId == tackle_ID_week_1$playId[i])
+  tackle_events_week1 <- rbind(tackle_events_week1, indiv.play)
+  
+}
+
+tackle_events_week1 <- left_join(tackle_events_week1, players, by = "nflId")
+write.csv(tackle_events_week1, "tackle_events/tackle_events_week1.csv")
+```
+
+
+
+```{r}
+for (f in 2:9){
+  fname <- paste0("tracking_week_", f)
+  fname <- paste0(fname, ".csv")
+  
+  tracking_week <- data.table::fread(fname)
+
+  #Filtering out all the tackles plays in tracking week 1
+  tackle_ID_week <- tracking_week %>%
+    filter(event == "tackle", displayName == "football") %>%
+    select(gameId, playId)%>%
+    distinct()
+   
+  
+  #unique entry of 1 game, 1 play
+  tackle_events_week <- tracking_week %>%
+    filter(gameId == tackle_ID_week$gameId[1],playId == tackle_ID_week$playId[1])
+  
+  #loop through for every play in every game
+  for (i in 2:(dim(tackle_ID_week)[1])) {
+    indiv.play <- tracking_week %>%
+      filter(gameId == tackle_ID_week$gameId[i], playId == tackle_ID_week$playId[i])
+    tackle_events_week <- rbind(tackle_events_week, indiv.play)
+    
+  }
+  
+  tackle_events_week <- left_join(tackle_events_week, players, by = "nflId")
+  oname <- paste0("tackle_events/tackle_events_week", f)
+  oname <- paste0(oname, ".csv")
+  write.csv(tackle_events_week, oname)
+}
+```
+
+```{r}
+tracking_week_1%>%
+  filter(gameId == selected.game, playId == game.plays[i], event == "tackle") 
+
+tackle_events_week1 %>%
+  filter(gameId == selected.game, playId == game.plays[i], event == "tackle")
+```
+
